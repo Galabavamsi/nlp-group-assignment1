@@ -321,9 +321,13 @@ class Q1System:
         return metrics
 
 
-def load_brown_sentences() -> list[TaggedSentence]:
+def load_brown_sentences(data_dir: str | Path = "data") -> list[TaggedSentence]:
+    import nltk
     from nltk.corpus import brown
 
+    nltk_data_dir = Path(data_dir) / "nltk"
+    if nltk_data_dir.exists():
+        nltk.data.path.insert(0, str(nltk_data_dir))
     sentences = []
     for sentence in brown.tagged_sents(tagset=None):
         filtered = [(normalize_word(word), tag) for word, tag in sentence if is_word(word)]
@@ -361,7 +365,7 @@ def parse_conllu(path: str | Path, morphology_aware: bool = True) -> list[Tagged
 def build_system(language: str, data_dir: str | Path = "data", seed: int = 7) -> Q1System:
     language = language.lower()
     if language == "english":
-        all_sentences = load_brown_sentences()
+        all_sentences = load_brown_sentences(data_dir)
         random.Random(seed).shuffle(all_sentences)
         split = int(len(all_sentences) * 0.8)
         train_sentences, test_sentences = all_sentences[:split], all_sentences[split:]

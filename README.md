@@ -1,6 +1,6 @@
 # NLP Group Assignment 1
 
-This repository is the shared implementation workspace for the NLP group assignment. Question 1 is implemented first; the remaining questions are documented as teammate handoff goals so the work can be extended without restructuring the project.
+This repository is the shared implementation workspace for the NLP group assignment. Question 1 is implemented first, and Question 3 now sits beside it as a reusable module/CLI for the spelling-correction part of the assignment.
 
 ## Current status
 
@@ -19,6 +19,21 @@ The current code uses **English + Spanish** (Spanish is the morphologically rich
 
 The main implementation is [src/q1_word_segmentation.py](src/q1_word_segmentation.py). The PDF brief is retained as [Group Assignment 1.pdf](Group%20Assignment%201.pdf) for reference.
 
+### Question 3 - implemented
+
+The spelling-corrector implementation uses the Brown corpus and includes:
+
+- Brown vocabulary, unigram frequencies, and add-k smoothed bigram probabilities.
+- Method A candidate generation: standard edit-distance-1 edits.
+- Method B candidate generation: symmetric-delete preprocessing and lookup.
+- Non-word correction by highest unigram frequency.
+- Real-word correction by local bigram context, with a configurable score margin.
+- Generated non-word and real-word test sets from the Brown holdout split.
+- Exact 1,000-word Speed Demon benchmark comparing Method A and Method B.
+- Continuous terminal CLI with changed-word highlighting and latency.
+
+The main implementation is [src/q3_spelling_corrector.py](src/q3_spelling_corrector.py).
+
 ## Setup
 
 From this directory:
@@ -30,7 +45,7 @@ pip install -r requirements.txt
 python scripts/download_data.py
 ```
 
-The setup downloads the NLTK Brown corpus and clones the official [UD Spanish-GSD](https://github.com/UniversalDependencies/UD_Spanish-GSD) repository into `data/`. Corpus data is ignored by Git.
+The setup downloads the NLTK Brown corpus into `data/nltk` and clones the official [UD Spanish-GSD](https://github.com/UniversalDependencies/UD_Spanish-GSD) repository into `data/`. Corpus data is ignored by Git.
 
 ## Run Question 1
 
@@ -43,6 +58,18 @@ streamlit run app.py
 ```
 
 The Spanish decoder returns morphology-aware tags internally. The report can show the base UPOS tag and the enriched tag side by side when discussing agreement.
+
+## Run Question 3
+
+```powershell
+python -m src.q3_spelling_corrector --sentence "I hav a good feeling about this."
+python -m src.q3_spelling_corrector --sentence "I would like to sea the world."
+python -m src.q3_spelling_corrector --evaluate --max-examples 500
+python -m src.q3_spelling_corrector --benchmark
+python -m src.q3_spelling_corrector --interactive
+```
+
+Use `--method edit` to force Method A or the default `--method symdelete` to use Method B. The benchmark always runs both methods on the exact same 1,000 misspelled-word batch.
 
 ## Suggested teammate workflow
 
@@ -59,16 +86,20 @@ Add `src/q2_dependency_parser.py` and a small evaluation entry point:
 5. Train a scikit-learn transition classifier, parse the dev split, and report LAS.
 6. Add examples for “The cat sat on the mat.”, “She eats a green salad.”, and “I saw the man with a telescope.”
 
-### Question 3 goal - spelling corrector and benchmark
+### Question 3 report checklist
 
-Add `src/q3_spelling_corrector.py` and a terminal entry point:
+When writing the submission report, run:
 
-1. Build Brown vocabulary, unigram frequencies, and a bigram model.
-2. Implement standard edit-distance-1 candidate generation.
-3. Implement symmetric-delete preprocessing and lookup.
-4. Correct non-word errors by unigram frequency and real-word errors with contextual bigram scoring.
-5. Generate separate non-word and real-word test sets, report accuracy, and benchmark exactly 1,000 words through both candidate methods.
-6. Add the continuous `exit`-driven CLI with changed-word highlighting and latency.
+```powershell
+python -m src.q3_spelling_corrector --evaluate --benchmark
+```
+
+Include the non-word accuracy, real-word accuracy, Method A latency, Method B latency, and the printed benchmark conclusion. Also include short CLI transcripts for:
+
+- `I hav a good feeling about this.`
+- `This is a test sentnce.`
+- `I would like to sea the world.`
+- `Please meat me at the station.`
 
 ### Question 4 goal - integrated Streamlit editor
 
@@ -87,6 +118,7 @@ Extend `app.py` only after Q1 and Q3 APIs are stable. Add `src/q4_editor.py`:
 ```text
 app.py                         Streamlit entry point (Q1 now; Q4 extension later)
 src/q1_word_segmentation.py   Q1 models, decoder, baselines, evaluation
+src/q3_spelling_corrector.py   Q3 spelling corrector, evaluation, benchmark, CLI
 scripts/download_data.py      Corpus setup
 tests/                         Shared tests to be added per question
 data/                          Local corpora, ignored by Git
