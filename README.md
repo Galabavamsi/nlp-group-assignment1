@@ -19,6 +19,23 @@ The current code uses **English + Spanish** (Spanish is the morphologically rich
 
 The main implementation is [src/q1_word_segmentation.py](src/q1_word_segmentation.py). The PDF brief is retained as [Group Assignment 1.pdf](Group%20Assignment%201.pdf) for reference.
 
+### Question 2 - implemented
+
+The transition-based dependency parser uses the UD English-EWT corpus and includes:
+
+- CoNLL-U sentence parsing with words, POS tags, heads, and dependency labels.
+- Arc-standard `SHIFT`, `LEFT-ARC(label)`, and `RIGHT-ARC(label)` transitions.
+- An oracle for generating gold transition sequences.
+- Four POS-based features: top/second stack and first/second buffer items.
+- A scikit-learn Logistic Regression transition classifier.
+- Dependency parsing and LAS evaluation on the development set.
+- Required example sentences:
+  - "The cat sat on the mat."
+  - "She eats a green salad."
+  - "I saw the man with a telescope."
+
+The main implementation is `src/q2_dependency_parser.py`.
+
 ### Question 3 - implemented
 
 The spelling-corrector implementation uses the Brown corpus and includes:
@@ -59,6 +76,18 @@ streamlit run app.py
 
 The Spanish decoder returns morphology-aware tags internally. The report can show the base UPOS tag and the enriched tag side by side when discussing agreement.
 
+## Run Question 2
+
+Download the UD English-EWT train and development CoNLL-U files and place them in:
+
+```text
+data/en_ewt-ud-train.conllu
+data/en_ewt-ud-dev.conllu
+```
+```powershell
+python -m src.q2_dependency_parser
+```
+
 ## Run Question 3
 
 ```powershell
@@ -74,17 +103,6 @@ Use `--method edit` to force Method A or the default `--method symdelete` to use
 ## Suggested teammate workflow
 
 Each member should work in a separate branch and add tests/data-download instructions for their question. Keep reusable models in `src/` and keep large corpora out of Git.
-
-### Question 2 goal - transition-based dependency parser
-
-Add `src/q2_dependency_parser.py` and a small evaluation entry point:
-
-1. Download `UD_English-EWT` and parse train/dev CoNLL-U files.
-2. Implement CoNLL-U sentence storage with words, POS tags, heads, and dependency labels.
-3. Generate oracle examples for the arc-standard `SHIFT`, `LEFT-ARC(label)`, and `RIGHT-ARC(label)` transitions.
-4. Extract the four required POS features (top/second stack and first/second buffer item).
-5. Train a scikit-learn transition classifier, parse the dev split, and report LAS.
-6. Add examples for “The cat sat on the mat.”, “She eats a green salad.”, and “I saw the man with a telescope.”
 
 ### Question 3 report checklist
 
@@ -118,6 +136,7 @@ Extend `app.py` only after Q1 and Q3 APIs are stable. Add `src/q4_editor.py`:
 ```text
 app.py                         Streamlit entry point (Q1 now; Q4 extension later)
 src/q1_word_segmentation.py   Q1 models, decoder, baselines, evaluation
+src/q2_dependency_parser.py   Q2 transition-based dependency parser
 src/q3_spelling_corrector.py   Q3 spelling corrector, evaluation, benchmark, CLI
 scripts/download_data.py      Corpus setup
 tests/                         Shared tests to be added per question
