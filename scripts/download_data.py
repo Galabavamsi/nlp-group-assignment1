@@ -17,8 +17,9 @@ def main() -> None:
     data_dir = Path(args.data_dir)
     nltk_data_dir = data_dir / "nltk"
     nltk_data_dir.mkdir(parents=True, exist_ok=True)
-    if not nltk.download("brown", download_dir=str(nltk_data_dir)):
-        raise SystemExit("Failed to download the Brown corpus.")
+    for corpus in ["brown", "treebank", "gutenberg", "reuters"]:
+        if not nltk.download(corpus, download_dir=str(nltk_data_dir)):
+            raise SystemExit(f"Failed to download the {corpus} corpus.")
     if not args.english_only:
         destination = data_dir / "UD_Spanish-GSD"
         if not destination.exists():
