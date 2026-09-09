@@ -163,7 +163,7 @@ The screenshot below captures the Streamlit web application running in **Genuine
 - **Processed Token Stream**: `they wil do this next week` (correction applied inline).
 - **Stats**: 6 words processed, 0 seg merges, 1 spelling correction, **0.66 ms per-token latency**, **8.13 ms per-trigger latency** — well within real-time interactive thresholds.
 
-![Q4 Streamlit Live Typing Mode](data/q4_streamlit_screenshot.png)
+![Q4 Streamlit Live Typing Mode](assets/q4_streamlit_screenshot.png)
 
 *The sidebar shows both modes (Simulated Fast-Typing Demo / Genuine Live User Typing), adjustable p and N sliders, and the multi-question navigation. Real-Time Live Alerts appear below the processed token stream immediately without any manual submit action.*
 
