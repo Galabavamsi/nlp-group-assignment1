@@ -10,7 +10,7 @@ from src.q1_word_segmentation import build_system, sample_inputs
 
 st.set_page_config(page_title="NLP Group Assignment 1", page_icon="🧩", layout="wide")
 
-st.sidebar.title("📌 NLP Assignment Modules")
+st.sidebar.title(" NLP Assignment Modules")
 app_mode = st.sidebar.radio(
     "Select Assignment Question",
     ["Question 4: Integrated Background Editor", "Question 1: Word Segmentation & POS Tagging"],

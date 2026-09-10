@@ -252,19 +252,19 @@ def render_q4_app(standalone: bool = True) -> None:
 
             st.subheader("🔔 Real-Time Live Alerts")
             if not state.alerts:
-                st.success("✅ No errors detected in current text.")
+                st.success("No errors detected in current text.")
             else:
                 for alert in state.alerts:
                     if alert.alert_type == "SEGMENT-ALERT":
-                        st.warning(f"🧩 **[SEGMENT-ALERT]** Merged token `{alert.original}` split into `{alert.replacement}` (POS: `{alert.pos_tags}`)")
+                        st.warning(f"**[SEGMENT-ALERT]** Merged token `{alert.original}` split into `{alert.replacement}` (POS: `{alert.pos_tags}`)")
                     elif alert.alert_type == "SPELL-ALERT":
-                        st.error(f"✏️ **[SPELL-ALERT]** Non-word `{alert.original}` corrected to `{alert.replacement}`")
+                        st.error(f"**[SPELL-ALERT]** Non-word `{alert.original}` corrected to `{alert.replacement}`")
                     elif alert.alert_type == "GRAMMAR-ALERT":
-                        st.info(f"📊 **[GRAMMAR-ALERT]** {alert.details}")
+                        st.info(f"**[GRAMMAR-ALERT]** {alert.details}")
 
             if state.tokens:
                 st.markdown("---")
-                st.subheader("📋 Part 4: Final Passage Structural Analysis")
+                st.subheader(" Part 4: Final Passage Structural Analysis")
                 report = analyzer.analyze_passage(
                     tokens=state.tokens,
                     pos_tags=state.pos_tags,
