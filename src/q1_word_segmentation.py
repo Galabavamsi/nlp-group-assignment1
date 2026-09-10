@@ -161,7 +161,9 @@ class POSTagger:
 
     morphology_aware: bool = False
     k: float = 0.1
-    beam_size: int = 64
+    # Brown's fine-grained Penn tagset contains many rare tags. A compact beam
+    # keeps decoding practical while retaining the highest-scoring histories.
+    beam_size: int = 16
     emissions: collections.Counter = field(default_factory=collections.Counter)
     tag_unigrams: collections.Counter = field(default_factory=collections.Counter)
     tag_bigrams: collections.Counter = field(default_factory=collections.Counter)
@@ -315,6 +317,10 @@ class Q1System:
         metrics["model_pos_accuracy"] /= max(1, comparable_tags)
         metrics["baseline_pos_accuracy"] /= max(1, all_gold_tags)
         metrics["morphology_aware_pos_accuracy"] = morphology_correct / max(1, comparable_tags)
+        metrics["gold_tag_count"] = all_gold_tags
+        metrics["comparable_tag_count"] = comparable_tags
+        metrics["segmentation_caused_tag_error_rate"] = metrics["segmentation_caused_tag_errors"] / max(1, all_gold_tags)
+        metrics["genuine_tag_error_rate"] = metrics["genuine_tag_errors"] / max(1, comparable_tags)
         labels = sorted(set(gold for gold, _ in confusion) | set(pred for _, pred in confusion))
         metrics["confusion_labels"] = labels
         metrics["confusion_matrix"] = {gold: {pred: confusion[(gold, pred)] for pred in labels} for gold in labels}

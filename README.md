@@ -19,6 +19,14 @@ The current code uses **English + Spanish** (Spanish is the morphologically rich
 
 The main implementation is [src/q1_word_segmentation.py](src/q1_word_segmentation.py). The PDF brief is retained as [Group Assignment 1.pdf](Group%20Assignment%201.pdf) for reference.
 
+The report-ready Q1 handoff is [reports/Q1_RESULTS.md](reports/Q1_RESULTS.md), with machine-readable metrics in [reports/q1_results.json](reports/q1_results.json) and plots under [reports/figures](reports/figures). Regenerate it with:
+
+```powershell
+python scripts/generate_q1_report.py --english-limit 200
+```
+
+The committed report evaluates the full Spanish test split and a deterministic 200-sentence slice of the English held-out split. The script accepts a larger `--english-limit` when a full Brown evaluation is desired.
+
 ## Setup
 
 From this directory:
