@@ -155,14 +155,38 @@ src/q4_passage_analysis.py        Part 4: sentence splitting, decision rule, com
 scripts/download_data.py          Fetches NLTK corpora + clones UD English-EWT / Spanish-GSD
 scripts/q4_streamlit_app.py       Q4 UI (rendered inside app.py); model cache + fingerprint
 scripts/q4_speed_benchmark.py     1,000-word Speed Demon benchmark
-scripts/q4_streamlit_app.py       (see above)
-scripts/generate_q1_report.py     Regenerates reports/Q1_RESULTS.md + figures + q1_results.json
-scripts/calibrate_q4_thresholds.py NEW — re-measures the Part 4 thresholds and prints justification
+scripts/generate_q1_report.py     Regenerates Q1 results/figure artifacts on demand
+scripts/calibrate_q4_thresholds.py Re-measures Part 4 thresholds and prints justification
 tests/test_q1.py … test_q4.py     20 tests, all passing
-data/                             Corpora + cache. Git-ignored content, but see §5.
-reports/                          Q1/Q2/Q3 results docs, q1_results.json, figures
-assets/                           Screenshot used in README §8
+data/                             Corpora + cache. Not tracked (see §5).
+assets/                           All report figures and screenshots (rendered by README)
+reports/                          REMOVED by a teammate commit; figures moved to assets/
 ```
+
+### 3.1 Git state and how it got here
+
+Teammates push directly to `origin/main`, and one of them **force-pushed**
+(`git push --force`), which rewrote history and made a plain `git pull --ff-only`
+fail with *"Diverging branches can't be fast-forwarded"*. What happened:
+
+- `cabcfdc` (the runtime fixes) **was** merged upstream and is in `main`.
+- The teammate's own commits (`217e3df`, `e433927`) built the report: they deleted
+  `reports/`, moved every figure into `assets/`, rewrote `README.md`, removed
+  `Group Assignment 1.pdf`, and added the final report `nlp_groupassignment1.pdf`.
+- That merge used the **older** `app.py` and `.streamlit/config.toml`, so the
+  deploy hardening from this pass was the only thing missing; it was rebased onto
+  their work and pushed as `8282d14`, then the README update as `3e52268`.
+
+**Before pulling, expect divergence.** If `git pull --ff-only` fails, use:
+
+```powershell
+git fetch origin
+git log --oneline origin/main -5      # see what they changed
+git rebase origin/main                # replay your commits on top
+git push origin main
+```
+
+Do not `git push --force` on `main`; it is what caused this in the first place.
 
 ---
 
@@ -330,10 +354,29 @@ src/q4_passage_analysis.py      calibrated decision table; ParseResult fix; toke
 scripts/q4_streamlit_app.py     model-cache fingerprint invalidation
 scripts/q4_speed_benchmark.py   conclusion text now matches its own measurements
 scripts/calibrate_q4_thresholds.py  NEW calibration + justification script
-app.py                          NLTK availability check accepts .zip; missing-data warning
+app.py                          NLTK private-download-dir fallback; zip-aware availability check
+.streamlit/config.toml          fileWatcherType = none; CORS/XSRF back to secure defaults
+.gitignore                      data/cache/ (model cache no longer tracked)
 tests/test_q4.py                decision-rule branches + surface_anomalies tests
-README.md                       corrected §1, §2, §4, §5, §6, §8
-reports/Q1_RESULTS.md           regenerated (Spanish 90.75% → 90.77%)
-reports/Q3_RESULTS.md           exact reproducing command documented
-reports/Q2_RESULTS.md           broken code fence fixed; wrong `acl` arc documented
+README.md                       live app link, local Quick start, embedded figures, per-question
+                                insights, Q&A answers, deployment notes, corrected Q4 numbers
+CONTEXT.md                      this handover document
+reports/*                       (this pass edited them; a later teammate commit removed the
+                                directory and moved the figures to assets/)
 ```
+
+### 9.1 Corrections applied to README numbers in the last pass
+
+These had all been written before the runtime fixes and were wrong:
+
+| Claim | Was | Now |
+| :--- | :--- | :--- |
+| Q4 smoothing `k` | bigram 0.05, trigram 0.01 | bigram 0.01, trigram 0.001 |
+| Q4 decision rule | `log P/L ≥ −6.5`, PPL < 300/450 | 350 / 650 / 800 decision table |
+| Live grammar threshold | 450 / 600 | 800 / 1500 |
+| Q4 Speed Demon | 30,457.70 ms (30.46 ms/word) | 650.0 ms (0.650 ms/word) |
+| Test count | 18 | 20 |
+
+The Speed Demon figure is the clearest illustration of why the tagger fix mattered:
+the same benchmark dropped **47×** (30.46 → 0.65 ms/word) purely from candidate-tag
+pruning, with no accuracy loss.
