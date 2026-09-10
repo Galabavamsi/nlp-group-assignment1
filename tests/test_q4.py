@@ -3,9 +3,38 @@
 import math
 
 from src.q4_live_editor import Alert, EditorState, IntegratedEditor
-from src.q4_passage_analysis import PassageAnalyzer, PassageAnalysisReport
+from src.q4_passage_analysis import PassageAnalyzer, PassageAnalysisReport, surface_anomalies
 from src.q4_pcfg_parser import PCFGParser, reconcile_tag
 from src.q4_shared_lm import AddKNgramLM, SharedLanguageModel
+
+
+def test_surface_anomalies_detect_repeated_function_words():
+    # LM perplexity is blind to repeated tokens, so these lexical checks matter.
+    assert surface_anomalies(["the", "the", "cat"]) != []
+    assert surface_anomalies(["and", "and", "then"]) != []
+    assert surface_anomalies(["very", "very", "good"]) == []
+    assert surface_anomalies(["a", "a", "a", "man"]) != []
+    assert surface_anomalies(["the", "cat", "sat", "on", "the", "mat"]) == []
+
+
+def test_analyze_passage_flags_repeated_function_word_as_ungrammatical():
+    parser = PCFGParser(start_symbol="S")
+    lm = SharedLanguageModel(
+        bigram=AddKNgramLM(n=2, k=0.1),
+        trigram=AddKNgramLM(n=3, k=0.1),
+    )
+    analyzer = PassageAnalyzer(pcfg_parser=parser, shared_lm=lm)
+    report = analyzer.analyze_passage(
+        ["the", "cat", "sat", "on", "the", "the", "mat"],
+        ["DT", "NN", "VBD", "IN", "DT", "DT", "NN"],
+    )
+    assert len(report.sentence_analyses) == 1
+    analysis = report.sentence_analyses[0]
+    assert analysis.verdict == "Ungrammatical"
+    assert analysis.chosen_method == "Surface Check"
+    assert analysis.surface_issues
+    # The issues column is surfaced in the Part 4 comparison table.
+    assert "Surface Issues" in report.to_dict_list()[0]
 
 
 def test_tagset_reconciliation_maps_q1_tags_to_ptb():
@@ -73,18 +102,42 @@ def test_passage_analyzer_decision_rule():
     )
     analyzer = PassageAnalyzer(pcfg_parser=parser, shared_lm=lm)
 
-    # Condition 1: PCFG parseable with good score -> PCFG Parser, Grammatical
+    # --- PCFG parses: PCFG is the structural authority, the Trigram LM decides ---
+    # Trigram PPL < 350 -> Grammatical, attributed to the PCFG parse.
     method, verdict = analyzer.apply_decision_rule(
         is_pcfg_parseable=True,
-        pcfg_logprob=-10.0,
-        num_tokens=5,  # norm score = -2.0 >= -6.5
+        pcfg_logprob=-60.0,
+        num_tokens=5,
         trigram_ppl=100.0,
         bigram_ppl=150.0,
     )
     assert method == "PCFG Parser"
     assert verdict == "Grammatical"
 
-    # Condition 2: PCFG unparseable, Trigram PPL low -> Trigram LM
+    # A parse alone is NOT sufficient: implausible lexical content stays a parse,
+    # but the verdict is Ungrammatical (350 <= Trigram PPL < 800).
+    method, verdict = analyzer.apply_decision_rule(
+        is_pcfg_parseable=True,
+        pcfg_logprob=-60.0,
+        num_tokens=5,
+        trigram_ppl=500.0,
+        bigram_ppl=200.0,
+    )
+    assert method == "PCFG Parser"
+    assert verdict == "Ungrammatical"
+
+    # Trigram inconclusive (>= 800) -> Bigram LM becomes the judge.
+    method, verdict = analyzer.apply_decision_rule(
+        is_pcfg_parseable=True,
+        pcfg_logprob=-60.0,
+        num_tokens=5,
+        trigram_ppl=900.0,
+        bigram_ppl=600.0,
+    )
+    assert method == "Bigram LM"
+    assert verdict == "Grammatical"
+
+    # --- PCFG cannot parse: the Trigram LM carries the decision ---
     method, verdict = analyzer.apply_decision_rule(
         is_pcfg_parseable=False,
         pcfg_logprob=float("-inf"),
@@ -95,14 +148,25 @@ def test_passage_analyzer_decision_rule():
     assert method == "Trigram LM"
     assert verdict == "Grammatical"
 
-    # Condition 3: High perplexity everywhere -> Ungrammatical
     method, verdict = analyzer.apply_decision_rule(
         is_pcfg_parseable=False,
         pcfg_logprob=float("-inf"),
         num_tokens=5,
         trigram_ppl=600.0,
-        bigram_ppl=700.0,
+        bigram_ppl=300.0,
     )
+    assert method == "Trigram LM"
+    assert verdict == "Ungrammatical"
+
+    # --- Both LMs reject: Ungrammatical ---
+    method, verdict = analyzer.apply_decision_rule(
+        is_pcfg_parseable=False,
+        pcfg_logprob=float("-inf"),
+        num_tokens=5,
+        trigram_ppl=900.0,
+        bigram_ppl=900.0,
+    )
+    assert method == "Bigram LM"
     assert verdict == "Ungrammatical"
 
 

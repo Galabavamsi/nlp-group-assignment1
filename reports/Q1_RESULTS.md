@@ -37,7 +37,7 @@ Segmentation exact-match is the proportion of sentences whose complete predicted
 | Language | Model segmentation exact | Greedy segmentation exact | Model POS accuracy | Most-frequent-tag baseline | Joint exact |
 |---|---:|---:|---:|---:|---:|
 | English | 141/200 (70.50%) | 45/200 (22.50%) | 91.40% | 86.84% | 51/200 (25.50%) |
-| Spanish | 103/427 (24.12%) | 25/427 (5.85%) | 90.75% | 85.61% | 32/427 (7.49%) |
+| Spanish | 103/427 (24.12%) | 25/427 (5.85%) | 90.77% | 85.61% | 32/427 (7.49%) |
 
 ### Error-source breakdown
 
@@ -46,7 +46,7 @@ A tag error is counted as segmentation-caused when the predicted word at that go
 | Language | Gold tag positions | Comparable positions | Segmentation-caused errors | Genuine POS errors | Segmentation-caused rate | Genuine-error rate among comparable positions |
 |---|---:|---:|---:|---:|---:|---:|
 | English | 3,616 | 2,883 | 733 | 248 | 20.27% | 8.60% |
-| Spanish | 10,520 | 4,151 | 6,369 | 384 | 60.54% | 9.25% |
+| Spanish | 10,520 | 4,151 | 6,369 | 383 | 60.54% | 9.23% |
 
 ## Sample outputs
 
