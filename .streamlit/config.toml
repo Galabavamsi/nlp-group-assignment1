@@ -1,8 +1,16 @@
 [server]
 headless = true
 port = 8501
-enableCORS = false
-enableXsrfProtection = false
+# The repository ships ~1,300 corpus files, and a recursive inotify watch over
+# that tree exhausts the container's watch limit on Streamlit Cloud
+# ("OSError: [Errno 28] inotify watch limit reached"). The watcher is only used
+# for local auto-reload, so disabling it is safe and removes that error.
+fileWatcherType = "none"
+# NOTE: CORS protection and XSRF protection are deliberately left at their
+# defaults (enabled). They were previously disabled, which is unnecessary for
+# this app and weakens any public deployment. If you run Streamlit behind a
+# custom reverse proxy and hit CORS/XSRF errors, re-enable the overrides here
+# explicitly -- do not disable them for a public app.
 
 [theme]
 primaryColor = "#2E78D2"

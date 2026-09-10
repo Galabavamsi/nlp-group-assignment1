@@ -5,3 +5,5 @@ __pycache__/
 data/
 .streamlit/secrets.toml
 outputs/
+
+data/cache/

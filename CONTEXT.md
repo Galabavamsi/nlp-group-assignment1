@@ -198,19 +198,54 @@ Expected benchmark output: ~5.4 s full pipeline, ~0.13 s isolated grammar check,
 
 ## 5. Deployment notes (read before pushing)
 
-- **`data/` is large and is served through Git LFS.** `.gitattributes` puts `data/**`
-  under LFS and the corpora already exist on this machine. A fresh clone therefore
-  **does not** contain corpora unless LFS objects are pulled (`git lfs pull`).
-- `app.py` will attempt to download missing NLTK corpora on first start and now shows a
-  sidebar warning if that fails (e.g. no network). On Streamlit Community Cloud the first
-  boot is slow: it must download corpora and **train the Q4 models** (PCFG + 12 LM fits)
-  before the first page renders. Budget ~1–3 minutes for a cold start.
-- `data/cache/q4_editor_models.pkl` is a ~200 MB local cache. Do not commit a large
-  update to it — it is regenerated automatically, and the fingerprint in §2.7 makes a
-  stale copy harmless.
-- For a **fresh deployment without LFS**, the reliable path is to run
-  `python scripts/download_data.py` once in the deploy environment (or add it to a
-  build/start command) and let the app build its cache.
+### 5.1 Streamlit Community Cloud — current state
+
+The app **is deployed and serving**:
+https://nlp-group-assignment1-y92dzndu2g3nu6uavyfsbw.streamlit.app
+
+Cloud clones the repo (including corpora via Git LFS, ~236 MiB) and installs
+`requirements.txt` with `uv` on **Python 3.14.7**. The first render trains the Q4
+models (~1–3 min).
+
+### 5.2 Log lines that are NOT errors
+
+Two warnings appear in the Cloud log; both are benign, and both are now addressed.
+
+```text
+OSError: [Errno 28] inotify watch limit reached
+Failed to schedule watch observer for path /mount/src/nlp-group-assignment1
+```
+
+Streamlit's file watcher tries to recursively watch ~1,300 corpus files and hits the
+container's inotify limit. It happens inside the SDK before any user code runs, so no
+`@st.cache_resource` wrapper can suppress it. Fixed at the source with
+`fileWatcherType = "none"` in `.streamlit/config.toml`; that file is committed, so a
+redeploy picks it up. The watcher only provides local auto-reload, so disabling it is
+safe.
+
+```text
+UserWarning: NLTK will not authorize the non-private download directory
+'/mount/src/nlp-group-assignment1/data/nltk'
+```
+
+NLTK refuses to *download into* a world/group-writable directory, which is what a
+hosted mount like `/mount/src/...` looks like. The repository copy is now treated as
+**read-only**, and `ensure_nltk_corpora()` downloads anything genuinely missing into a
+**private per-user cache** (`~/.cache/nlp_assignment_nltk`) that NLTK does authorise.
+Because the corpora ship with the repo, nothing normally needs downloading.
+
+### 5.3 Other deployment constraints
+
+- `.streamlit/config.toml` **no longer disables CORS/XSRF protection**. Those were
+  switched off previously; they are now at Streamlit's secure defaults. Only re-disable
+  them for a local reverse-proxy setup — never for a public app.
+- `data/**` is served through Git LFS; Cloud pulls LFS objects automatically.
+- **`data/cache/*.pkl` is no longer tracked.** It was, at ~195 MB — the bulk of the
+  clone, and it inflates memory when unpickled. It is regenerated on demand, and the
+  fingerprint in §2.7 makes a stale copy harmless. Cold start therefore trains the
+  models; that is the intended trade-off.
+- If a deploy ever fails to build, the lean fallback is to run
+  `python scripts/download_data.py` once in the environment.
 
 ---
 

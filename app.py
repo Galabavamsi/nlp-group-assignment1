@@ -21,19 +21,33 @@ st.set_page_config(page_title="NLP Group Assignment 1", page_icon="🧩", layout
 def ensure_nltk_corpora(data_dir: str = "data") -> list[str]:
     """Make the bundled NLTK data visible and fetch anything genuinely missing.
 
-    ``nltk.data.find`` only reports an *unpacked* resource directory. Corpora that
-    are present purely as a ``.zip`` (e.g. ``reuters.zip``) therefore raise
-    ``LookupError`` even though ``nltk.corpus.reuters`` loads fine from the zip.
-    Treating that as "missing" made every cold start re-download the corpus and
-    extract it, so this checks the zip as well before downloading.
+    Three deployment-specific details are handled here:
+
+    1. ``nltk.data.find`` only reports an *unpacked* resource directory. Corpora
+       present purely as a ``.zip`` (e.g. ``reuters.zip``) raise ``LookupError``
+       even though ``nltk.corpus.reuters`` loads fine from the zip, so the zip is
+       checked as well before anything is considered missing.
+    2. NLTK refuses to download into a world/group-writable directory, which is
+       exactly what a hosted mount such as Streamlit Cloud's ``/mount/src/...``
+       looks like (NLTK warns: "will not authorize the non-private download
+       directory"). The repository copy is therefore used *read-only*, and any
+       genuinely missing resource is downloaded into a private per-user cache
+       instead, which NLTK does authorise.
+    3. A failed download must never break the app: the repository already ships
+       the corpora, so failures are reported back to the caller as a warning.
 
     Returns the list of resource names that could not be made available.
     """
     data_path = Path(data_dir)
+    # Read-only location: the corpora committed under data/ (or the offline zip).
     nltk_data_dir = data_path / "nltk"
     nltk_data_dir.mkdir(parents=True, exist_ok=True)
-    if str(nltk_data_dir) not in nltk.data.path:
-        nltk.data.path.insert(0, str(nltk_data_dir))
+    # Writable, private fallback for anything that has to be fetched at runtime.
+    private_dir = Path.home() / ".cache" / "nlp_assignment_nltk"
+
+    for candidate in (str(nltk_data_dir), str(private_dir)):
+        if candidate not in nltk.data.path:
+            nltk.data.path.insert(0, candidate)
 
     def _available(resource_type: str, name: str) -> bool:
         try:
@@ -44,21 +58,23 @@ def ensure_nltk_corpora(data_dir: str = "data") -> list[str]:
         # nltk.data.find does not see zip-only resources; check for the archive.
         return (nltk_data_dir / resource_type / f"{name}.zip").exists()
 
+    def _fetch(resource_type: str, name: str) -> bool:
+        """Download into a private directory; never raise."""
+        for target in (nltk_data_dir, private_dir):
+            try:
+                if nltk.download(name, download_dir=str(target), quiet=True):
+                    return True
+            except Exception:
+                continue
+        return False
+
     missing: list[str] = []
     for corpus in ["brown", "treebank", "gutenberg", "reuters"]:
-        if not _available("corpora", corpus):
-            try:
-                if not nltk.download(corpus, download_dir=str(nltk_data_dir), quiet=True):
-                    missing.append(corpus)
-            except Exception:
-                missing.append(corpus)
+        if not _available("corpora", corpus) and not _fetch("corpora", corpus):
+            missing.append(corpus)
     for tok in ["punkt", "punkt_tab"]:
-        if not _available("tokenizers", tok):
-            try:
-                if not nltk.download(tok, download_dir=str(nltk_data_dir), quiet=True):
-                    missing.append(tok)
-            except Exception:
-                missing.append(tok)
+        if not _available("tokenizers", tok) and not _fetch("tokenizers", tok):
+            missing.append(tok)
     return missing
 
 
