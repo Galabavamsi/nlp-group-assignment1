@@ -22,39 +22,72 @@ from src.q4_pcfg_parser import PCFGParser
 from src.q4_shared_lm import SharedLanguageModel
 
 
+def _model_fingerprint(data_dir: Path) -> str:
+    """Fingerprint the inputs that determine the cached models.
+
+    The Q4 cache pickles trained objects whose classes live in ``src/``. Without a
+    fingerprint a pickled model built by an older revision keeps being unpickled
+    after the code changes -- including changes to the tagger or the decision
+    rule -- so the app silently serves stale behaviour. Hashing the source files
+    and the corpus identity makes a code/corpus change invalidate the cache.
+    """
+    import hashlib
+
+    digest = hashlib.sha256()
+    repo_root = Path(__file__).resolve().parent.parent
+    for name in (
+        "q1_word_segmentation.py",
+        "q3_spelling_corrector.py",
+        "q4_live_editor.py",
+        "q4_passage_analysis.py",
+        "q4_pcfg_parser.py",
+        "q4_shared_lm.py",
+    ):
+        source = repo_root / "src" / name
+        if source.exists():
+            digest.update(source.read_bytes())
+    digest.update(b"|seed=7|p_merge=0.08|trigger=5|")
+    for probe in ("nltk/corpora/brown", "nltk/corpora/brown.zip", "nltk/corpora/treebank", "nltk/corpora/treebank.zip"):
+        digest.update(f"|{probe}:{(data_dir / probe).exists()}".encode())
+    return digest.hexdigest()
+
+
 @st.cache_resource(show_spinner="Loading Question 1, 3, and 4 models (cached for fast start)...")
-def get_integrated_editor(p_merge: float = 0.08, trigger_interval: int = 5, data_dir: str = "data") -> tuple[IntegratedEditor, PassageAnalyzer]:
+def get_q4_base_models(data_dir: str = "data"):
     data_path = Path(data_dir)
     cache_dir = data_path / "cache"
     cache_dir.mkdir(parents=True, exist_ok=True)
     cache_file = cache_dir / "q4_editor_models.pkl"
+    fingerprint = _model_fingerprint(data_path)
 
     if cache_file.exists():
         try:
             with cache_file.open("rb") as f:
-                q1_sys, q3_corr, pcfg_pars, shared_lm = pickle.load(f)
-        except Exception:
-            q1_sys = build_system("english", data_dir=data_path)
-            q3_corr = build_corrector_from_brown(seed=7, data_dir=data_dir)[0]
-            pcfg_pars = PCFGParser.train_from_treebank(data_dir=data_path)
-            shared_lm = SharedLanguageModel.train_and_tune(data_dir=data_path)
-            with cache_file.open("wb") as f:
-                pickle.dump((q1_sys, q3_corr, pcfg_pars, shared_lm), f)
-    else:
-        q1_sys = build_system("english", data_dir=data_path)
-        q3_corr = build_corrector_from_brown(seed=7, data_dir=data_dir)[0]
-        pcfg_pars = PCFGParser.train_from_treebank(data_dir=data_path)
-        shared_lm = SharedLanguageModel.train_and_tune(data_dir=data_path)
-        try:
-            with cache_file.open("wb") as f:
-                pickle.dump((q1_sys, q3_corr, pcfg_pars, shared_lm), f)
+                cached = pickle.load(f)
+            # Accept only caches written by the current code/corpus fingerprint.
+            if isinstance(cached, tuple) and len(cached) == 2 and cached[0] == fingerprint:
+                return cached[1]
         except Exception:
             pass
+    q1_sys = build_system("english", data_dir=data_path)
+    q3_corr = build_corrector_from_brown(seed=7, data_dir=data_dir)[0]
+    pcfg_pars = PCFGParser.train_from_treebank(data_dir=data_path)
+    shared_lm = SharedLanguageModel.train_and_tune(data_dir=data_path)
+    models = (q1_sys, q3_corr, pcfg_pars, shared_lm)
+    try:
+        with cache_file.open("wb") as f:
+            pickle.dump((fingerprint, models), f)
+    except Exception:
+        pass
+    return models
 
+
+def get_integrated_editor(p_merge: float = 0.08, trigger_interval: int = 5, data_dir: str = "data") -> tuple[IntegratedEditor, PassageAnalyzer]:
+    q1_sys, q3_corr, pcfg_pars, shared_lm = get_q4_base_models(data_dir)
     editor = IntegratedEditor(
         p_merge=p_merge,
         trigger_interval=trigger_interval,
-        data_dir=data_path,
+        data_dir=Path(data_dir),
         q1_system=q1_sys,
         q3_corrector=q3_corr,
         shared_lm=shared_lm,
@@ -106,6 +139,14 @@ def render_q4_app(standalone: bool = True) -> None:
             with tab_alerts:
                 alert_feed = st.container()
 
+            with metrics_container.container():
+                mc1, mc2, mc3, mc4, mc5 = st.columns(5)
+                m_words = mc1.empty()
+                m_merges = mc2.empty()
+                m_spell = mc3.empty()
+                m_tlat = mc4.empty()
+                m_trlat = mc5.empty()
+
             final_state = None
             for state, alert in editor.simulate_typing_stream(passage_words, sleep_delay_sec=sleep_delay):
                 final_state = state
@@ -114,13 +155,11 @@ def render_q4_app(standalone: bool = True) -> None:
                 text_container.markdown(f"**Live Token Stream:**\n> {' '.join(state.tokens)}")
 
                 # Update live metrics
-                with metrics_container.container():
-                    col1, col2, col3, col4, col5 = st.columns(5)
-                    col1.metric("Words Processed", len(state.tokens))
-                    col2.metric("Seg Merges Resolved", state.segment_merges_resolved)
-                    col3.metric("Spelling Corrections", state.spelling_corrections_applied)
-                    col4.metric("Per-Token Latency", f"{state.avg_per_token_latency_ms:.2f} ms")
-                    col5.metric("Per-Trigger Latency", f"{state.avg_per_trigger_latency_ms:.2f} ms")
+                m_words.metric("Words Processed", len(state.tokens))
+                m_merges.metric("Seg Merges Resolved", state.segment_merges_resolved)
+                m_spell.metric("Spelling Corrections", state.spelling_corrections_applied)
+                m_tlat.metric("Per-Token Latency", f"{state.avg_per_token_latency_ms:.2f} ms")
+                m_trlat.metric("Per-Trigger Latency", f"{state.avg_per_trigger_latency_ms:.2f} ms")
 
                 # Emit live alert card if triggered
                 if alert:
@@ -264,15 +303,18 @@ def render_q4_app(standalone: bool = True) -> None:
 
             if state.tokens:
                 st.markdown("---")
-                st.subheader(" Part 4: Final Passage Structural Analysis")
-                report = analyzer.analyze_passage(
-                    tokens=state.tokens,
-                    pos_tags=state.pos_tags,
-                    total_seg_merges=state.segment_merges_resolved,
-                    total_spell_corrections=state.spelling_corrections_applied,
-                )
-                df = pd.DataFrame(report.to_dict_list())
-                st.dataframe(df, use_container_width=True)
+                st.subheader("📋 Part 4: Final Passage Structural Analysis")
+                st.caption("When you finish typing, click below to evaluate the complete passage across PCFG, Bigram LM, and Trigram LM.")
+                if st.button("📊 Run Part 4 Structural Analysis", type="secondary", key="run_live_analysis"):
+                    with st.spinner("Analyzing sentence structure with PCFG and N-gram models..."):
+                        report = analyzer.analyze_passage(
+                            tokens=state.tokens,
+                            pos_tags=state.pos_tags,
+                            total_seg_merges=state.segment_merges_resolved,
+                            total_spell_corrections=state.spelling_corrections_applied,
+                        )
+                        df = pd.DataFrame(report.to_dict_list())
+                        st.dataframe(df, use_container_width=True)
 
 
 if __name__ == "__main__":

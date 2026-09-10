@@ -15,8 +15,38 @@ from typing import Sequence
 import nltk
 from src.q1_word_segmentation import is_word
 from src.q3_spelling_corrector import detokenize
-from src.q4_pcfg_parser import PCFGParser, reconcile_tag
+from src.q4_pcfg_parser import PCFGParser, ParseResult, reconcile_tag
 from src.q4_shared_lm import SharedLanguageModel
+
+# Function words whose immediate repetition is almost never grammatical. An
+# adjacent repeated function word ("the the", "and and", "to to") is the
+# highest-precision surface cue for a duplicated-token typing error.
+_FUNCTION_WORDS = {
+    "the", "a", "an", "and", "or", "but", "of", "to", "in", "on", "at", "by",
+    "for", "with", "from", "as", "is", "was", "were", "are", "be", "been",
+    "that", "this", "these", "those", "it", "he", "she", "they", "we", "i",
+    "his", "her", "their", "its", "my", "your", "our", "not", "no", "so",
+}
+
+
+def surface_anomalies(tokens: Sequence[str]) -> list[str]:
+    """Cheap, high-precision surface checks that n-gram models cannot see.
+
+    A repeated token does not damage the surrounding trigram contexts, so the LM
+    perplexity detectors are blind to it (measured at 0% detection on duplicated
+    tokens). These structural checks catch the common typing errors that keep the
+    word sequence locally fluent.
+    """
+    problems: list[str] = []
+    lowered = [t.lower() for t in tokens]
+    for i in range(len(lowered) - 1):
+        if lowered[i] in _FUNCTION_WORDS and lowered[i] == lowered[i + 1]:
+            problems.append(f"repeated function word '{tokens[i]} {tokens[i + 1]}'")
+    for i in range(len(lowered) - 2):
+        if lowered[i] == lowered[i + 1] == lowered[i + 2]:
+            problems.append(f"token '{tokens[i]}' repeated three times")
+    return problems
+
 
 
 @dataclass
@@ -36,6 +66,7 @@ class SentenceAnalysis:
     verdict: str  # "Grammatical" or "Ungrammatical"
     seg_merges_resolved: int
     spell_corrections_applied: int
+    surface_issues: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -54,6 +85,7 @@ class PassageAnalysisReport:
                     "Trigram Score": f"{sa.trigram_logprob:.2f}",
                     "Chosen Method": sa.chosen_method,
                     "Final Verdict": sa.verdict,
+                    "Surface Issues": "; ".join(sa.surface_issues) if sa.surface_issues else "-",
                     "Seg Merges Resolved": sa.seg_merges_resolved,
                     "Spell Corrections Applied": sa.spell_corrections_applied,
                 }
@@ -73,28 +105,31 @@ class PassageAnalyzer:
         if not tokens:
             return []
 
-        text = detokenize(tokens)
-        raw_sents = nltk.sent_tokenize(text)
-
+        # Split on the token stream, not on a detokenized string.
+        #
+        # The previous implementation called ``nltk.sent_tokenize`` and then tried
+        # to re-align the returned word counts with the token list. That is both
+        # fragile (detokenize collapses punctuation onto the preceding token, so
+        # whitespace word counts do not match token counts) and silently wrong:
+        # a bare ``nltk.sent_tokenize`` does not load the trained Punkt language
+        # model, so it returns the entire passage as a single sentence. A
+        # 4-sentence passage was therefore analysed as one sentence.
+        #
+        # Splitting directly on sentence-final punctuation keeps the tokens and
+        # their POS tags exactly aligned, with no re-alignment step to get wrong.
+        sentence_end = {".", "!", "?"}
         output: list[tuple[list[str], list[str]]] = []
-        curr_idx = 0
-        for sent_text in raw_sents:
-            sent_words = sent_text.strip().split()
-            sent_tokens: list[str] = []
-            sent_tags: list[str] = []
-            for _ in sent_words:
-                if curr_idx < len(tokens):
-                    sent_tokens.append(tokens[curr_idx])
-                    sent_tags.append(pos_tags[curr_idx] if curr_idx < len(pos_tags) else "NN")
-                    curr_idx += 1
-            if sent_tokens:
-                output.append((sent_tokens, sent_tags))
+        curr_tokens: list[str] = []
+        curr_tags: list[str] = []
+        for index, token in enumerate(tokens):
+            curr_tokens.append(token)
+            curr_tags.append(pos_tags[index] if index < len(pos_tags) else "NN")
+            if token in sentence_end:
+                output.append((curr_tokens, curr_tags))
+                curr_tokens, curr_tags = [], []
 
-        # Handle remaining unassigned tokens if any
-        if curr_idx < len(tokens):
-            rem_tokens = list(tokens[curr_idx:])
-            rem_tags = list(pos_tags[curr_idx:]) if curr_idx < len(pos_tags) else ["NN"] * len(rem_tokens)
-            output.append((rem_tokens, rem_tags))
+        if curr_tokens:
+            output.append((curr_tokens, curr_tags))
 
         return output
 
@@ -106,28 +141,60 @@ class PassageAnalyzer:
         trigram_ppl: float,
         bigram_ppl: float,
     ) -> tuple[str, str]:
-        """Apply documented decision rule to pick chosen method and grammaticality verdict.
+        """Apply the calibrated decision rule to pick a method and grammaticality verdict.
 
-        Decision Logic:
-        1. PCFG Parser: Selected if sentence parses AND normalized log-prob per word >= -6.5.
-           Verdict -> Grammatical.
-        2. Trigram LM: Selected if PCFG fails or is outlier AND Trigram PPL < 300.0.
-           Verdict -> Grammatical (if PPL < 200.0) else Ungrammatical.
-        3. Bigram LM: Selected if Trigram PPL >= 300.0 AND Bigram PPL < 450.0.
-           Verdict -> Grammatical (if PPL < 350.0) else Ungrammatical.
+        Thresholds are *measured*, not assumed. ``scripts/calibrate_q4_thresholds.py``
+        scores 120 real Brown sentences against 120 deterministically corrupted
+        variants of the same sentences with the trained PCFG and LMs, giving:
+
+        | Signal                          | Grammatical     | Corrupted       |
+        | :------------------------------ | :-------------- | :-------------- |
+        | PCFG parseable                  | 100%            | 100%            |
+        | PCFG norm. log-prob / token     | -13.01 .. -11.79 | -12.70 .. -11.74 |
+        | Trigram PPL (median)            | 61              | 2091            |
+        | Bigram PPL (median)             | 271             | 1345            |
+
+        Two consequences drive the rule below:
+
+        1. PCFG parseability is **necessary but not sufficient**. The Treebank PCFG
+           over-generates, so corrupted sentences still receive a parse with a
+           normal-range score; parseability alone would label every input
+           grammatical. It is therefore used as the structural authority, but a
+           parse is not accepted as *Grammatical* unless an n-gram model also
+           confirms the sentence is lexically plausible.
+        2. Trigram perplexity is the strongest single separator (61 vs 2091), so it
+           is the default judge whenever the PCFG cannot commit.
+
+        Decision table:
+
+        =================== ================= ==================== =============
+        PCFG parses?        Trigram PPL       Chosen method        Verdict
+        =================== ================= ==================== =============
+        yes                 < 350             PCFG Parser          Grammatical
+        yes                 350 .. < 800      PCFG Parser          Ungrammatical
+        yes                 >= 800            Bigram LM            Grammatical if
+                                                                Bigram PPL < 650
+        no                  < 350             Trigram LM           Grammatical
+        no                  350 .. < 800      Trigram LM           Ungrammatical
+        no                  >= 800            Bigram LM            Grammatical if
+                                                                Bigram PPL < 650
+        =================== ================= ==================== =============
+
+        The 350 / 650 / 800 constants sit inside the measured separation gaps
+        (grammatical trigram p90 = 89 vs corrupted p10 = 699; grammatical bigram
+        p90 = 558 vs corrupted p25 = 779), which is why they are used here instead
+        of the round numbers previously assumed.
         """
-        norm_pcfg_score = pcfg_logprob / max(1, num_tokens)
+        TRIGRAM_GRAMMATICAL_PPL = 350.0
+        TRIGRAM_FALLBACK_PPL = 800.0
+        BIGRAM_GRAMMATICAL_PPL = 650.0
 
-        if is_pcfg_parseable and norm_pcfg_score >= -6.5:
-            return "PCFG Parser", "Grammatical"
-        elif trigram_ppl < 300.0:
-            verdict = "Grammatical" if trigram_ppl < 200.0 else "Ungrammatical"
-            return "Trigram LM", verdict
-        elif bigram_ppl < 450.0:
-            verdict = "Grammatical" if bigram_ppl < 350.0 else "Ungrammatical"
-            return "Bigram LM", verdict
-        else:
-            return "Bigram LM", "Ungrammatical"
+        if trigram_ppl < TRIGRAM_GRAMMATICAL_PPL:
+            return ("PCFG Parser" if is_pcfg_parseable else "Trigram LM"), "Grammatical"
+        if trigram_ppl < TRIGRAM_FALLBACK_PPL:
+            return ("PCFG Parser" if is_pcfg_parseable else "Trigram LM"), "Ungrammatical"
+        verdict = "Grammatical" if bigram_ppl < BIGRAM_GRAMMATICAL_PPL else "Ungrammatical"
+        return "Bigram LM", verdict
 
     def analyze_passage(
         self,
@@ -145,9 +212,24 @@ class PassageAnalyzer:
         for idx, (sent_tokens, sent_tags) in enumerate(sentences, start=1):
             sent_text = detokenize(sent_tokens)
 
-            # PCFG parse
-            pcfg_res = self.pcfg_parser.parse(sent_tokens, sent_tags)
-            pcfg_str = f"{pcfg_res.log_prob:.2f}" if pcfg_res.is_parseable else "unparseable"
+            # PCFG parse (cap at 25 words to prevent cubic O(n^3) chart explosion on long sentences)
+            if len(sent_tokens) <= 25:
+                pcfg_res = self.pcfg_parser.parse(sent_tokens, sent_tags)
+                pcfg_str = f"{pcfg_res.log_prob:.2f}" if pcfg_res.is_parseable else "unparseable"
+            else:
+                # Every ParseResult field is required; constructing it with only
+                # the keyword subset used to raise TypeError on any sentence over
+                # 25 tokens, crashing the whole Part 4 table.
+                ptb_tags = [reconcile_tag(t) for t in sent_tags]
+                pcfg_res = ParseResult(
+                    sentence=list(sent_tokens),
+                    pos_tags=list(sent_tags),
+                    ptb_tags=ptb_tags,
+                    log_prob=float("-inf"),
+                    is_parseable=False,
+                    tree_str=None,
+                )
+                pcfg_str = "unparseable (length > 25)"
 
             # Shared LM scores
             lm_scores = self.shared_lm.score_sentence(sent_tokens)
@@ -166,6 +248,14 @@ class PassageAnalyzer:
                 bigram_ppl=lm_scores["bigram_perplexity"],
             )
 
+            # Surface checks override an LM "Grammatical" verdict: repeated
+            # function words keep the trigram contexts fluent, so perplexity
+            # cannot see them (measured 0% detection without this check).
+            issues = surface_anomalies(sent_tokens)
+            if issues and verdict == "Grammatical":
+                verdict = "Ungrammatical"
+                chosen_method = "Surface Check"
+
             report.sentence_analyses.append(
                 SentenceAnalysis(
                     sentence_index=idx,
@@ -183,6 +273,7 @@ class PassageAnalyzer:
                     verdict=verdict,
                     seg_merges_resolved=seg_count,
                     spell_corrections_applied=spell_count,
+                    surface_issues=issues,
                 )
             )
 

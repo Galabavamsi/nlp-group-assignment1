@@ -173,6 +173,11 @@ class POSTagger:
     word_tag_totals: collections.Counter = field(default_factory=collections.Counter)
     most_frequent_tag: dict[str, str] = field(default_factory=dict)
     tags: set[str] = field(default_factory=set)
+    # Viterbi candidate pruning: how many globally frequent tags to keep as a
+    # fallback for words whose own tag set is small or unseen.
+    fallback_tag_count: int = 30
+    fallback_tags: tuple[str, ...] = ()
+    word_tags: dict[str, tuple[str, ...]] = field(default_factory=dict)
 
     @staticmethod
     def morphology_tag(upos: str, feats: str | None) -> str:
@@ -208,7 +213,35 @@ class POSTagger:
             if word not in best or count > best[word][0]:
                 best[word] = (count, tag)
         self.most_frequent_tag = {word: tag for word, (_, tag) in best.items()}
+        # Candidate tagging: for each word, the tags actually observed with it,
+        # plus the globally most frequent tags as a fallback for unseen words.
+        self.fallback_tags = tuple(tag for tag, _ in self.tag_unigrams.most_common(self.fallback_tag_count))
+        observed: dict[str, list[str]] = {}
+        for word, tag in self.emissions:
+            observed.setdefault(word, []).append(tag)
+        self.word_tags = {word: tuple(tags) for word, tags in observed.items()}
         return self
+
+    def candidate_tags(self, word: str) -> tuple[str, ...]:
+        """Tags worth considering for a word: those seen with it, plus frequent tags.
+
+        Brown's fine-grained tagset has ~317 tags. Considering all of them for
+        every token made ``tag()`` cost ~100-500 ms per short sentence, which is
+        unusable in the live editor. Restricting the search to tags observed with
+        the word (plus a frequency-ranked fallback set for unseen words) keeps the
+        Viterbi search small without discarding any tag the training data supports
+        for that word.
+        """
+        observed = self.word_tags.get(word)
+        if observed:
+            merged = list(observed)
+            seen = set(observed)
+            for tag in self.fallback_tags:
+                if tag not in seen:
+                    merged.append(tag)
+                    seen.add(tag)
+            return tuple(merged)
+        return tuple(self.fallback_tags)
 
     def emission_logprob(self, word: str, tag: str) -> float:
         word = normalize_word(word)
@@ -229,17 +262,24 @@ class POSTagger:
         if not words or not self.tags:
             return []
         states: dict[tuple[str, str], tuple[float, list[str]]] = {(START, START): (0.0, [])}
+        emission_cache: dict[tuple[str, str], float] = {}
         for word in words:
+            candidates = self.candidate_tags(word)
             next_states: dict[tuple[str, str], tuple[float, list[str]]] = {}
             for (previous2, previous1), (score, path) in states.items():
-                for tag in sorted(self.tags):
-                    candidate_score = score + self.transition_logprob(previous2, previous1, tag) + self.emission_logprob(word, tag)
+                for tag in candidates:
+                    emission_key = (word, tag)
+                    emission = emission_cache.get(emission_key)
+                    if emission is None:
+                        emission = self.emission_logprob(word, tag)
+                        emission_cache[emission_key] = emission
+                    candidate_score = score + self.transition_logprob(previous2, previous1, tag) + emission
                     key = (previous1, tag)
                     incumbent = next_states.get(key)
                     if incumbent is None or candidate_score > incumbent[0]:
                         next_states[key] = (candidate_score, [*path, tag])
-            # Brown's original Penn tagset contains many rare tags. A small
-            # beam keeps trigram Viterbi practical without changing the model.
+            # Brown's original Penn tagset contains many rare tags. A beam keeps
+            # trigram Viterbi practical without changing the model.
             states = dict(sorted(next_states.items(), key=lambda item: item[1][0], reverse=True)[: self.beam_size])
         return max(states.values(), key=lambda item: item[0])[1]
 
